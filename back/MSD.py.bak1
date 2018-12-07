@@ -1,0 +1,178 @@
+# coding: utf-8
+
+import os
+import json
+import sqlite3
+import time
+import random
+import M6
+from Mobigen.Common import Log
+from Mobigen.Common.Log import __LOG__
+Log.Init()
+import Mobigen.Common.Lock as Lock
+import M6.Common.Default as Default
+import M6.Common.TableIDTool as TableIDTool
+import M6.Common.ToolBox as ToolBox
+
+CREATE_SAMPLING_TABLE_QUERY = """
+    CREATE TABLE SAMPLING_HISTORY (
+            PARTITION_KEY   TEXT,
+            PARTITION_DATE  TEXT,
+            BLOCK_NUM       INTEGER, 
+
+            NODE_ID         INTEGER,
+            STATUS          TEXT,
+
+            UNIQUE(PARTITION_KEY, PARTITION_DATE, BLOCK_NUM)
+    )
+"""
+
+class MSD(object):
+    def __init__(self, sock, param):
+        object.__init__(self)
+        self.sock = sock
+        self.sid = '0_0'
+        self.backendHash = {}
+        self.WELCOME ="+OK Welcome MSD Server ver %s\r\n"% M6.VERSION
+
+        self.fLock = Lock.CLock("%s/%s" % \
+                (Default.M6_LOCK_DIR, "SYS_NODE_INFO_00000000000000"))
+
+        self._protocol_main = {
+            'INIT': self.init
+        }
+
+    def run(self):
+        self._send_msg("+OK", {'msg': self.WELCOME})
+
+        while True:
+            try:
+                try:
+                    line = self.sock.Readline()
+                    line = line.strip()
+                    if line.strip() == '':
+                        continue
+
+                    protocol, protocol_option_lengh = line.split(None, 1)
+                    protocol_option_lengh = int(protocol_option_lengh.strip())
+                    protocol_option = None
+                    if protocol_option_lengh != 0:
+                        protocol_option = self.sock.Read(protocol_option_lengh)
+                except Exception, err:
+                    self._send_msg('-ERR', {'msg': 'Protocol Error'})
+                    continue
+
+                protocol = protocol.strip()
+                if protocol in self._protocol_main:
+                    result, result_detail = self._protocol_main[protocol](protocol_option)
+                elif protocol == 'QUIT':
+                    self._send_msg('+OK', None)
+                    break
+                else:
+                    result = '-ERR'
+                    result_detail = {'msg': 'Invalid Command'}
+                    
+                self._send_msg(result, result_detail)
+
+                # 프로토콜 중간에 에러가 발생할 경우 프로토콜 접속 종료
+                if result == '-ERR' and self._is_execute:
+                    break
+
+            except self.sock.SocketDisconnectException:
+                break
+            except Exception, err:
+                __LOG__.Exception()
+                try:
+                    self._send_msg('-ERR', {'msg': str(err)})
+                except:
+                    pass
+                break
+
+            if result == '-ERR':
+                break
+
+        try:
+            self.sock.close()
+        except: pass
+        try:
+            self._conn.close()
+        except: pass
+
+   
+    def init(self, param_dict) :
+        """
+        샘플링 테이블 생성 
+
+        @ request
+        {
+            "protocol": "init", 
+            "database_name": "test_database",
+            "table_name": "test_table"
+        }
+
+        @ response
+        {
+            "code" : 0,
+            "message": ""
+        }
+        """
+        response = {}
+        # get parameter
+        try:
+            database_name = param_dict["database_name"]
+            table_name = param_dict["table_name"]
+        except Exception, err:
+            __LOG__.Exception()
+            return '-ERR Param error %s [%s]\r\n' % (str(err), param_dict)
+
+        # default sampling_history directory 생성
+        try: os.makedirs(Default.M6_MASTER_DATA_DIRs + '/sampling_history')
+        except Exception, err: pass
+
+        # 테이블 중복 체크
+        if os.path.exists(Default.M6_MASTER_DATA_DIR + ('/sampling_history/%s.DAT' % table_name)):
+            return "-ERR %s sampling history is already exists\r\n" % table_name
+
+        # sampling history table 생성
+        try:
+            sampling_table_path = Default.M6_MASTER_DATA_DIR + ('/sampling_history/%s.DAT' % table_name)
+            conn = sqlite3.connect(sampling_table_path)
+            cur = conn.cursor()
+            cur.execute(CREATE_SAMPLING_TABLE_QUERY)
+        except Exception, err:
+            __LOG__.Exception()
+            return "-ERR Create %s table's sampling history fail\r\n" % table_name
+        finally:
+            try: cur.close()
+            except: pass
+            try: conn.close()
+            except: pass
+
+        return '+OK', {'message': 'success'}
+        return "Create %s sampling history success\r\n" % table_name
+
+
+    def _send_msg(self, result, result_detail):
+        if result_detail is None:
+            msg = '%s 0\r\n' % (result)
+        else:
+            if type(result_detail) is dict:
+                result_detail = json.dumps(result_detail)
+
+            msg = '%s %s\r\n%s' % (result, len(result_detail), result_detail)
+
+        if result == '-ERR':
+            __LOG__.Watch(msg)
+
+        print 'send msg in MSD : ', msg
+        self.sock.SendMessage(msg)
+
+def test_2():
+    from M6.Common.Protocol import Socket
+    s = Socket()
+    #msd = MSD(sock)
+
+if __name__ == "__main__":
+    from M6.Common.DB import Backend
+    import M6.Common.Default as Default
+    test_2()
