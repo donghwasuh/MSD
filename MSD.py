@@ -334,9 +334,7 @@ class MSD(object):
         # 2. 블록 파일이 C 상태인지 확인
         hash_value = hash(table_id + partition_key + partition_date)
         hash_mod_val = ToolBox._get_hash_mod_value(table_id)
-        print 'hash_mod_val :', hash_mod_val
         mod_value = hash_value % hash_mod_val
-        print 'mod_value : ',mod_value
 
         ret = False
         for i in range(10):
@@ -352,15 +350,18 @@ class MSD(object):
 
         sql = QUERY_FIND_NODE_SELECT % ({'table_key': partition_key, 'table_partition': partition_date})
 
-        # search in table
+        # block file의 상태가 C이고 현재 노드의 상태가 VALID인 경우에만 진행 
         ret = None
         for i in range(10):
             try:
-                ret = cursor.execute(sql)
-                print ret.fetchall()
+                cursor.execute(sql)
+                ret = cursor.fetchall()
+                if ret[0][4] != 'VALID':
+                    return {"code": 0, "message" : "-ERR block file status is not clean (%s)" %
+                    param_dict}
             except Exception, err:
-                if self.check_locked_exception(err, table, "FIND_NODE"): continue
-                self.check_error(err, table, "FIND_NODE")
+                __LOG__.Exception()
+                return {"code": 0, "message" : "-ERR get block file status fail "}
             if ret == None:
                 __LOG__.Watch("SAMPLING_START access backend [%s] retry %d" % (param_dict, i))
             else: break
@@ -380,13 +381,12 @@ class MSD(object):
             try: conn.close()
             except: pass
 
-        #__LOG__.Trace("Insert %s sampling history success \
-        #        (key: %s, partition: %s, node_id : %d, block_num : %d)" \
-        #        % (table_name, partition_key, partition_date, node_id, block_num)
-        #return {"code": 0, "message" : "Insert %s sampling history success \
-        #        (key: %s, partition: %s, node_id : %d, block_num : %d)" \
-        #        % (table_name, partition_key, partition_date, node_id, block_num)}
-        return {"code" : 0, "message" : "test"}
+        __LOG__.Trace("Insert %s sampling history success \
+                (key: %s, partition: %s, node_id : %d, block_num : %d)" \
+                % (table_name, partition_key, partition_date, node_id, block_num))
+        return {"code": 0, "message" : "Insert %s sampling history success \
+                (key: %s, partition: %s, node_id : %d, block_num : %d)" \
+                % (table_name, partition_key, partition_date, node_id, block_num)}
 
     def SAMPLING_END(self, param_dict):
         """
@@ -428,6 +428,7 @@ class MSD(object):
             cur = conn.cursor()
             cur.execute(UPDATE_SAMPLING_HISTORY_STATUS_QUERY %\
                     ('C', partition_key, partition_date, block_num, node_id))
+
             conn.commit()
         except Exception, err:
             __LOG__.Exception()
@@ -495,11 +496,11 @@ class MSD(object):
         # worker port 지정 
         # woker return 문에 따른 처리 
         for node_id in node_list:
-            node_ip = self.get_node_ip(node_id)
-            port = 9999
-            s = Socket.Socket(node_ip, port)
-            
-            s.Readline()
+            #node_ip = self.get_node_ip(node_id)
+            #port = 9999
+            #s = Socket.Socket(node_ip, port)
+            #
+            #s.Readline()
 
             param_dict = {}
             param_dict['protocol'] = 'remove'
