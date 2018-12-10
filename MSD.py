@@ -17,6 +17,7 @@ import M6.Common.TableIDTool as TableIDTool
 import M6.Common.ToolBox as ToolBox
 from M6.Common.DB import Backend
 from M6.Common.Protocol import Socket
+from M6.Common.Protocol.DLDClient import Client as DLDClient
 
 QUERY_FIND_NODE_SELECT = """
     SELECT
@@ -69,6 +70,15 @@ CHECK_SAMPLING_HISTORY_QUERY = """
     SELECT 
         COUNT(*)
     FROM 
+        SAMPLING_HISTORY
+    WHERE
+        %s
+"""
+
+SELECT_SAMPLING_HISTORY_WHERE_QUERY = """
+    SELECT 
+        %s
+    FROM
         SAMPLING_HISTORY
     WHERE
         %s
@@ -164,6 +174,8 @@ class MSD(object):
                         ret_message = self.SAMPLING_END(param_dic)
                     elif cmd == "REMOVE":
                         ret_message = self.REMOVE(param_dic)
+                    elif cmd == "REBUILD":
+                        ret_message = self.REBUILD(param_dic)
                     else:
                         ret_message = "-ERR Invalid Command\r\n"
 
@@ -469,11 +481,11 @@ class MSD(object):
             condition = param_dict['condition']
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+            return {"code": 1, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
 
         # 테이블 존재 체크
         if not os.path.exists(SAMPLING_HISTORY % table_id):
-            return {"code": 0, "message": "-ERR %s sampling history is not exists" % table_id}
+            return {"code": 1, "message": "-ERR %s sampling history is not exists" % table_id}
 
         sampling_table_path = SAMPLING_HISTORY % table_id
 
@@ -488,7 +500,7 @@ class MSD(object):
                 node_list.append(row[0])
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message" : "-ERR %s table history status delete fail" % table_id}
+            return {"code": 1, "message" : "-ERR %s table history status delete fail" % table_id}
         finally:
             try: cur.close()
             except: pass
@@ -523,7 +535,7 @@ class MSD(object):
             conn.commit()
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message" : "-ERR %s table history status delete fail" % table_id}
+            return {"code": 1, "message" : "-ERR %s table history status delete fail" % table_id}
         finally:
             try: cur.close()
             except: pass
@@ -535,6 +547,86 @@ class MSD(object):
         __LOG__.Trace(ret_message)
         return {"code" : 0, "message" : ret_message}
 
+    def REBUILD(self, param_dict):
+        """
+        - sampling history에서 샘플링 정보 삭제 (Master의 REMOVE 이용)
+        - woker에게 remove 정보 전달 (Master의 REMOVE 이용)
+        - DLD정보를 이용하여 sampling history에 status(R)인 정보 넣음 
+        - worker에게 rebuild 정보 전달 
+
+        @ request
+        {
+            "protocol": "remove",
+             "table_id": "T123"
+             "condition": "(PARTITION_DATE >= '20180101000000')"
+        }
+
+        @ response
+        {"code": 0, "message": ""}
+        """
+        
+        # get parameter
+        try:
+            table_id = param_dict['table_id']
+            condition = param_dict['condition']
+        except Exception, err:
+            __LOG__.Exception()
+            return {"code": 0, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+
+        # 테이블 존재 체크
+        if not os.path.exists(SAMPLING_HISTORY % table_id):
+            return {"code": 0, "message": "-ERR %s sampling history is not exists" % table_id}
+
+        sampling_table_path = SAMPLING_HISTORY % table_id
+
+
+        # sampling history 정보 삭제 
+        #ret_message = self.REMOVE(param_dict)
+        #if ret_message['code'] != 0:
+        #    return ret_message
+        #
+
+        # dld에서 condtion에 맞는 위치정보 select 
+        l_query = self.change_column_name(condition, 'dld')
+        with DLDClient() as client:
+            result = client.FIND_NODE_SELECT(table_id, l_query)
+            result.remove('+OK List\r\n')
+
+        # DLD의 FIND_NODE_SELECT는 C상태인 블록 파일의 위치정보를 반환
+        # ex ) ['ip_address, scope, key, partition, block_num\r\n']의 형태로 반환 
+        # 다중화 파일이 존재하기 때문에 이중 하나의 위치정보만을 사용하여 rebuild 해야한다
+        # 다중화된 블록의 위치정보중 하나의 블록만을 고르기 위해 dict로 구성
+        # total_dict = {
+        #     'key, partition, block_num' : ['ip_address, scope, key, partition, block_num\r\n', ...],
+        #     'key1, partition1, block_num1' : ['ip_address, scope, key, partition, block_num\r\n', ...],
+        # }
+        # 
+        # value에 존재하는 다중화된 위치정보중 1개를 랜덤으로 고른다 
+        before_key = ''
+        total_dict = {}
+        for record in result:
+            cur_key = record.strip().split(',', 2)[2]
+            if before_key != cur_key:
+                total_dict[cur_key] = []
+                total_dict[cur_key].append(record.strip())
+                before_key = cur_key
+            else:
+                total_dict[cur_key].append(record.strip())
+
+        #  다중화된 위치정보 중 1개의 record를 random으로 고르는 작업 
+        for key in total_dict.keys():
+            value_list = total_dict[key]
+            print 'last one : ', lst[random.randrange(0,len(value_list))]
+
+        # FIXME: sampling history db에 insert 될 수있는 형태로 데이터 가공
+
+
+        # FIXME: dld 정보에 status를 'R'로 변경해서 sampling history db에 insert
+        
+
+        # FIXME: rebuild 정보를 worker에 전달 
+
+        
     def get_node_ip(self, node_id):
         """
         node_id를 인자로 받아 node_ip를 반환 
@@ -555,19 +647,34 @@ class MSD(object):
 
         return node_id
 
-    def change_column_name(self, line):
+    def change_column_name(self, line, form='worker'):
         """
         woker로 column을 parameter로 전송시, column명 변경
+
+        - form = worker, worker에게 전달하는 경우의 컬럼 이름 포맷 
         @ PARTITON_DATE -> _PARTITOIN_DATE
         @ PARTITIONE_KEY -> _PARTITION_KEY
         @ NODE_ID -> _NODE_ID
+        
+        - form = worker, DLD에게 전달하는 경우의 컬럼 이름 포맷 
+        @ PARTITON_DATE -> TABLE_PARTITOIN
+        @ PARTITIONE_KEY -> TABLE_KEY
+        @ NODE_ID -> NODE_ID
         """
-        if 'PARTITION_DATE' in line:
-            return line.replace('PARTITION_DATE', '_PARTITION_DATE')
-        elif 'PARTITION_KEY' in line:
-            return line.replace('PARTITION_KEY', '_PARTITION_KEY')
-        elif 'NODE_ID' in line:
-            return line.replace('NODE_ID', '_NODE_ID')
+        if form == 'worker':
+            if 'PARTITION_DATE' in line:
+                return line.replace('PARTITION_DATE', '_PARTITION_DATE')
+            elif 'PARTITION_KEY' in line:
+                return line.replace('PARTITION_KEY', '_PARTITION_KEY')
+            elif 'NODE_ID' in line:
+                return line.replace('NODE_ID', '_NODE_ID')
+        elif form == 'dld':
+            if 'PARTITION_DATE' in line:
+                return line.replace('PARTITION_DATE', 'TABLE_PARTITION')
+            elif 'PARTITION_KEY' in line:
+                return line.replace('PARTITION_KEY', 'TABLE_KEY')
+            elif 'NODE_ID' in line:
+                return line
 
     def get_backend(self, table_id, mod_val):
         """
@@ -597,7 +704,6 @@ class MSD(object):
             conn = sqlite3.connect(Default.M6_MASTER_DATA_DIR + '/SYS_TABLE_INFO.DAT')
             c = conn.cursor()
             c.execute("SELECT DSK_EXP_TIME FROM SYS_TABLE_INFO WHERE TABLE_NAME = '%s'" % table_id)
-            print "SELECT DSK_EXP_TIME FROM SYS_TABLE_INFO WHERE TABLE_NAME = '%s'" % table_id
             result = c.fetchall()
         except Exception, err:
             __LOG__.Exception(str(err))
@@ -648,7 +754,6 @@ class MSD(object):
                 param_dict['table_id'] = table_id
                 param_dict['condition'] = condition_query
 
-                print param_dict
                 __LOG__.Trace("expire checker thread try to delete [%s]..." % param_dict)
                 self.REMOVE(param_dict)
 

@@ -10,8 +10,8 @@ def init_test():
     print s.ReadMessage()
     param_dict = {}
     param_dict['protocol'] = 'remove'
-    param_dict['table_id'] = 'T8'
-    param_dict['condition'] = '(PARTITION_KEY = \'k1\')'
+    param_dict['table_id'] = 'T40'
+    param_dict['condition'] = '(PARTITION_KEY = \'k7\')'
 
     param = json.dumps(param_dict) + '\n'
 

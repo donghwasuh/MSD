@@ -11,7 +11,7 @@ def init_test():
     param_dict = {}
     param_dict['protocol'] = 'init'
     param_dict['database_name'] = 'test_database'
-    param_dict['table_name'] = 'T40'
+    param_dict['table_name'] = 'T41'
 
     param = json.dumps(param_dict) + '\n'
 
