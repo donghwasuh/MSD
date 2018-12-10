@@ -384,10 +384,10 @@ class MSD(object):
 
         __LOG__.Trace("Insert %s sampling history success \
                 (key: %s, partition: %s, node_id : %d, block_num : %d)" \
-                % (table_name, partition_key, partition_date, node_id, block_num))
+                % (table_id, partition_key, partition_date, node_id, block_num))
         return {"code": 0, "message" : "Insert %s sampling history success \
                 (key: %s, partition: %s, node_id : %d, block_num : %d)" \
-                % (table_name, partition_key, partition_date, node_id, block_num)}
+                % (table_id, partition_key, partition_date, node_id, block_num)}
 
     def SAMPLING_END(self, param_dict):
         """
