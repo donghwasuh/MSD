@@ -6,6 +6,7 @@ import sqlite3
 import time
 import random
 import threading
+import datetime
 import M6
 from Mobigen.Common import Log
 from Mobigen.Common.Log import __LOG__
@@ -127,7 +128,7 @@ class MSD(object):
         object.__init__(self)
         self.sock = sock
         self.sid = '0_0'
-        #self.exp_check_thread = threading.Thread(target=self.expire_check)
+        self.exp_check_thread = threading.Thread(target=self.expire_check)
         self.backendHash = {}
         self.WELCOME ="+OK Welcome MSD Server ver %s\r\n"% M6.VERSION
 
@@ -140,7 +141,8 @@ class MSD(object):
             if Default.DEBUG:
                 __LOG__.Trace("Start %s" % str(self.sock.addr))
 
-            #self.exp_check_thread.run()
+            #FIXME 시작하자마자 thread start되는 위치로 변경
+            self.exp_check_thread.start()
             while True:
                 try :
                     line = self.sock.Readline(timeOut=Default.DLD_TIME_OUT).strip()
@@ -454,7 +456,7 @@ class MSD(object):
         {
             "protocol": "remove",
              "table_id": "T123"
-             "condition": "(PARTITION_DATA >= '20180101000000')"
+             "condition": "(PARTITION_DATE >= '20180101000000')"
         }
 
         @ response
@@ -589,6 +591,71 @@ class MSD(object):
         mod_value = hash_value % hash_mod_val
 
         return mod_value
+
+    def get_table_info(self, table_id):
+        try:
+            conn = sqlite3.connect(Default.M6_MASTER_DATA_DIR + '/SYS_TABLE_INFO.DAT')
+            c = conn.cursor()
+            c.execute("SELECT DSK_EXP_TIME FROM SYS_TABLE_INFO WHERE TABLE_NAME = '%s'" % table_id)
+            print "SELECT DSK_EXP_TIME FROM SYS_TABLE_INFO WHERE TABLE_NAME = '%s'" % table_id
+            result = c.fetchall()
+        except Exception, err:
+            __LOG__.Exception(str(err))
+        finally:
+            c.close()
+            conn.close()
+        return result[0][0]
+
+    def expire_check(self):
+        """
+        - 테이블의 expire 시간 계산
+        - sampling history에서 expire 시간 지난 레코드 삭제 
+        - worker로 sampling data 삭제 요청 
+        """
+
+        __LOG__.Trace("expire checker thread start...")
+        while True:
+            # 현재시간 계산 
+            dt = datetime.datetime.now()
+            now_date_min =  datetime.datetime.strptime(dt.strftime("%Y%m%d%H%M%S"), '%Y%m%d%H%M%S')
+
+            SAMPLING_HISTORY_DIR = Default.M6_MASTER_DATA_DIR + "/sampling_history/"
+            file_list = os.listdir(SAMPLING_HISTORY_DIR)
+
+            for file_name in file_list:
+                # sampling_history directory에 존재하는 journal 파일 제외
+                if 'journal' in file_name:
+                    continue
+
+                # table의 disk_exp_time 
+                table_id = file_name[:-4]
+                disk_exp_time = self.get_table_info(table_id)
+
+                # (현재 시간 - disk_exp_time) 계산
+                limit_date = now_date_min - datetime.timedelta(minutes=disk_exp_time)
+                limit_time = datetime.datetime.strftime(limit_date, "%Y%m%d%H%M%S")
+
+                __LOG__.Trace("expire checker thread try to delete \
+                [table: %s, disk_exp_time : %s, limit_time: %s]..." \
+                % (table_id, disk_exp_time, limit_time))
+                # (현재 시간 - disk_exp_time) 이전 데이터 삭제를 위한 where 쿼리 
+                condition_query = '(PARTITION_DATE <= \'%s\')' % limit_time
+
+                # REMOVE 프로토콜을 사용하여 disk_exp 시간 지난 
+                # sampling history 레코드 삭제 & worker로 sampling data 삭제 요청 
+                param_dict = {}
+                param_dict['protocol'] = 'remove'
+                param_dict['table_id'] = table_id
+                param_dict['condition'] = condition_query
+
+                print param_dict
+                __LOG__.Trace("expire checker thread try to delete [%s]..." % param_dict)
+                self.REMOVE(param_dict)
+
+            __LOG__.Trace("expire checker thread sleep 60 seconds...")
+            time.sleep(60)
+
+        return None
 
 
 def test_2():
