@@ -5,6 +5,7 @@ import json
 import sqlite3
 import time
 import random
+import threading
 import M6
 from Mobigen.Common import Log
 from Mobigen.Common.Log import __LOG__
@@ -126,6 +127,7 @@ class MSD(object):
         object.__init__(self)
         self.sock = sock
         self.sid = '0_0'
+        #self.exp_check_thread = threading.Thread(target=self.expire_check)
         self.backendHash = {}
         self.WELCOME ="+OK Welcome MSD Server ver %s\r\n"% M6.VERSION
 
@@ -138,6 +140,7 @@ class MSD(object):
             if Default.DEBUG:
                 __LOG__.Trace("Start %s" % str(self.sock.addr))
 
+            #self.exp_check_thread.run()
             while True:
                 try :
                     line = self.sock.Readline(timeOut=Default.DLD_TIME_OUT).strip()
@@ -332,9 +335,7 @@ class MSD(object):
 
         # FIXME : DLD에서 블록파일 status 확인 로직 추가 
         # 2. 블록 파일이 C 상태인지 확인
-        hash_value = hash(table_id + partition_key + partition_date)
-        hash_mod_val = ToolBox._get_hash_mod_value(table_id)
-        mod_value = hash_value % hash_mod_val
+        mod_value = self.get_mode_value(table_id, partition_key, partition_date)
 
         ret = False
         for i in range(10):
@@ -577,6 +578,18 @@ class MSD(object):
         
         backend = self.backendHash[backend_hash_key]
         return backend
+    
+    def get_mode_value(self, table_id, partition_key, partition_date):
+        """
+        hash 값을 기준으로 쪼개진 DLD block 파일에 접근하기 위해 
+        mod value 계산 
+        """
+        hash_value = hash(table_id + partition_key + partition_date)
+        hash_mod_val = ToolBox._get_hash_mod_value(table_id)
+        mod_value = hash_value % hash_mod_val
+
+        return mod_value
+
 
 def test_2():
     from M6.Common.Protocol import Socket
