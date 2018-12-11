@@ -605,7 +605,6 @@ class MSD(object):
             value_list = total_dict[key]
             target_record = value_list[random.randrange(0,len(value_list))]
 
-            print target_record
            
             # DLD value: (ip_address, scope, key, partition, block_num) 
             # sampling_history : (key, partition, block_num, node_id, status) 변환
@@ -630,11 +629,28 @@ class MSD(object):
             if not final_record_dict.has_key(ip_address):
                 final_record_dict[ip_address] = []
             final_record_dict[ip_address].append(key + ',' + partition + ',' + block_num)
-            print final_record_dict
-            print
+
+        print final_record_dict
+        for keys in final_record_dict:
+            param_dict = self.make_rebuild_protocol(table_id, condition, final_record_dict[keys])
+            print 'param_dict : ', param_dict
+            # FIXME: rebuild 정보를 worker에 전달 , worker return에 따른 처리 추가 
+            #port = 9999
+            #s = Socket.Socket(keys, port)
+            #s.Readline
+            #ret_message = s.SendMessage(param_dict)
 
 
-        # FIXME: rebuild 정보를 worker에 전달 
+    def make_rebuild_protocol(self, table_id, condition, record_list):
+        param_dict = {}
+        param_dict['protocol'] = 'rebuild'
+        param_dict['table_id'] = table_id
+        param_dict['condition'] = self.change_column_name(condition)
+
+        param_dict['target_block'] = {}
+        param_dict['target_block']['fields'] = ["partition_date", "partition_key", "block_num"]
+        param_dict['target_block']['records'] = record_list
+        return param_dict
 
         
     def get_node_ip(self, node_id):
@@ -746,7 +762,6 @@ class MSD(object):
                 # table의 disk_exp_time 
                 table_id = file_name[:-4]
 
-                # FIXME : systableinfo에 없는 테이블 이름의 파일이 잇는경우 thread 멈춤 현상 해결
                 try: 
                     result = self.get_table_info(table_id)
                     if len(result) == 0:
