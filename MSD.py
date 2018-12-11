@@ -729,8 +729,8 @@ class MSD(object):
         - worker로 sampling data 삭제 요청 
         """
 
-        __LOG__.Trace("expire checker thread start...")
         while True:
+            __LOG__.Trace("expire check thread: start...")
             # 현재시간 계산 
             dt = datetime.datetime.now()
             now_date_min =  datetime.datetime.strptime(dt.strftime("%Y%m%d%H%M%S"), '%Y%m%d%H%M%S')
@@ -760,7 +760,7 @@ class MSD(object):
                 limit_date = now_date_min - datetime.timedelta(minutes=disk_exp_time)
                 limit_time = datetime.datetime.strftime(limit_date, "%Y%m%d%H%M%S")
 
-                __LOG__.Trace("expire checker thread try to delete \
+                __LOG__.Trace("expire check thread: try to delete \
                 [table: %s, disk_exp_time : %s, limit_time: %s]..." \
                 % (table_id, disk_exp_time, limit_time))
                 # (현재 시간 - disk_exp_time) 이전 데이터 삭제를 위한 where 쿼리 
@@ -773,10 +773,10 @@ class MSD(object):
                 param_dict['table_id'] = table_id
                 param_dict['condition'] = condition_query
 
-                __LOG__.Trace("expire checker thread try to delete [%s]..." % param_dict)
+                __LOG__.Trace("expire check thread: try to delete [%s]..." % param_dict)
                 self.REMOVE(param_dict)
 
-            __LOG__.Trace("expire checker thread sleep 60 seconds...")
+            __LOG__.Trace("expire check thread: sleep 60 seconds...")
             time.sleep(60)
 
         return None
