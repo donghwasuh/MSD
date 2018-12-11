@@ -222,6 +222,7 @@ class MSD(object):
                 conn.commit()
         except Exception, e:
             __LOG__.Exception()
+            raise Exception(str(e))
         finally:
             try: cursor.close()
             except: pass
@@ -262,7 +263,6 @@ class MSD(object):
         if os.path.exists(SAMPLING_HISTORY % table_name):
             return {"code": 0, "message": "-ERR %s sampling history is already exists" % table_name}
 
-        # sampling history table 생성
         try:
             sampling_table_path = SAMPLING_HISTORY % table_name
             conn = sqlite3.connect(sampling_table_path)
@@ -351,36 +351,26 @@ class MSD(object):
             node_id = param_dict['node_id']
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+            return {"code": 1, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
 
         # 테이블 존재 체크
         if not os.path.exists(SAMPLING_HISTORY % table_id):
-            return {"code": 0, "message": "-ERR %s sampling history is not exists" % table_id}
+            return {"code": 1, "message": "-ERR %s sampling history is not exists" % table_id}
 
         sampling_table_path = SAMPLING_HISTORY % table_id
         # sampling 여부 확인 
         # 1. 다중화된 블록 파일의 sampling 여부 확인 
+        where_sql = "PARTITION_KEY = '%s' AND PARTITION_DATE = '%s' AND BLOCK_NUM = %d" % \
+                    (partition_key, partition_date, block_num)
         try:
-            where_sql = "PARTITION_KEY = '%s' AND PARTITION_DATE = '%s' AND BLOCK_NUM = %d" % \
-                (partition_key, partition_date, block_num)
-            conn = sqlite3.connect(sampling_table_path)
-            cur = conn.cursor()
-            cur.execute(CHECK_SAMPLING_HISTORY_QUERY % where_sql)
-            if cur.fetchall()[0][0] != 0:
-                return {"code": 0, "message" : "-ERR sampling history already exists"}
-        except Exception, err:
-            __LOG__.Exception()
-            return {"code": 0, "message" : "-ERR Check %s table sampling history fail" % table_id}
-        finally:
-            try: cur.close()
-            except: pass
-            try: conn.close()
-            except: pass
+            result = self.execute_query(sampling_table_path, CHECK_SAMPLING_HISTORY_QUERY % where_sql)
+            if result[0][0] != 0:
+                return {"code": 1, "message" : "-ERR sampling history already exists"}
+        except Exception, e:
+            return {"code": 1, "message" : "-ERR Check %s table sampling history fail" % table_id}
 
-        # FIXME : DLD에서 블록파일 status 확인 로직 추가 
         # 2. 블록 파일이 C 상태인지 확인
         mod_value = self.get_mode_value(table_id, partition_key, partition_date)
-
         ret = False
         for i in range(10):
             try:
@@ -389,7 +379,7 @@ class MSD(object):
                 ret = True
             except Exception, err:
                 __LOG__.Exception()
-                return {"code": 0, "message" : "-ERR access to %s table backend fail" % table_id}
+                return {"code": 1, "message" : "-ERR access to %s table backend fail" % table_id}
             if ret: break
             else: __LOG__.Watch("SAMPLING_START access backend [%s] retry %d" % (param_dict, i))
 
@@ -402,29 +392,21 @@ class MSD(object):
                 cursor.execute(sql)
                 ret = cursor.fetchall()
                 if ret[0][4] != 'VALID':
-                    return {"code": 0, "message" : "-ERR block file status is not clean (%s)" %
+                    return {"code": 1, "message" : "-ERR block file status is not clean (%s)" %
                     param_dict}
             except Exception, err:
                 __LOG__.Exception()
-                return {"code": 0, "message" : "-ERR get block file status fail "}
+                return {"code": 1, "message" : "-ERR get block file status fail "}
             if ret == None:
                 __LOG__.Watch("SAMPLING_START access backend [%s] retry %d" % (param_dict, i))
             else: break
 
         # 3. sampling history 기록 ( status = N )
         try:
-            conn = sqlite3.connect(sampling_table_path)
-            cur = conn.cursor()
-            cur.execute(INSERT_SAMPLING_HISTORY_QUERY % (partition_key, partition_date, block_num, node_id, 'N'))
-            conn.commit()
+            self.execute_query(sampling_table_path, INSERT_SAMPLING_HISTORY_QUERY % (partition_key,\
+            partition_date, block_num, node_id, 'N'), False)
         except Exception, err:
-            __LOG__.Exception()
-            return {"code": 0, "message" : "-ERR Insert %s table sampling history fail" % table_id}
-        finally:
-            try: cur.close()
-            except: pass
-            try: conn.close()
-            except: pass
+            return {"code": 1, "message" : "-ERR Insert %s table sampling history fail" % table_id}
 
         __LOG__.Trace("Insert %s sampling history success \
                 (key: %s, partition: %s, node_id : %d, block_num : %d)" \
@@ -469,20 +451,10 @@ class MSD(object):
 
         # sampling 블록파일의 상태 변경 
         try:
-            conn = sqlite3.connect(sampling_table_path)
-            cur = conn.cursor()
-            cur.execute(UPDATE_SAMPLING_HISTORY_STATUS_QUERY %\
-                    ('C', partition_key, partition_date, block_num, node_id))
-
-            conn.commit()
+            self.execute_query(sampling_table_path, UPDATE_SAMPLING_HISTORY_STATUS_QUERY %\
+                    ('C', partition_key, partition_date, block_num, node_id), False)
         except Exception, err:
-            __LOG__.Exception()
             return {"code": 0, "message" : "-ERR %s table history status update fail" % table_id}
-        finally:
-            try: cur.close()
-            except: pass
-            try: conn.close()
-            except: pass
 
         ret_message = "update %s sampling history success (%d, %s, %s, %d,)" % \
                 (table_id, node_id, partition_key, partition_date, block_num)
@@ -518,30 +490,22 @@ class MSD(object):
             return {"code": 1, "message": "-ERR %s sampling history is not exists" % table_id}
 
         sampling_table_path = SAMPLING_HISTORY % table_id
-
         # 삭제하고자 하는 sampling 정보의 node_id 검색 
         try:
-            conn = sqlite3.connect(sampling_table_path)
-            cur = conn.cursor()
-            cur.execute(GET_SAMPLING_HISTORY_NODE_ID_QUERY % condition)
-
+            result = self.execute_query(sampling_table_path, GET_SAMPLING_HISTORY_NODE_ID_QUERY % condition)
             node_list = []
-            for row in cur:
+            for row in result:
                 node_list.append(row[0])
         except Exception, err:
-            __LOG__.Exception()
             return {"code": 1, "message" : "-ERR %s table history status delete fail" % table_id}
-        finally:
-            try: cur.close()
-            except: pass
-            try: conn.close()
-            except: pass
+
 
         # FIXME
         # worker port 지정 
         # woker return 문에 따른 처리 
         for node_id in node_list:
-            #node_ip = self.get_node_ip(node_id)
+            #try: node_ip = self.get_node_ip(node_id)
+            #except Exception, e: return {"code" : 1, "message" : "-ERR get node_ip fail"}
             #port = 9999
             #s = Socket.Socket(node_ip, port)
             #
@@ -557,20 +521,11 @@ class MSD(object):
             #ret_message = s.SendMessage(param)
             # FIXME :return 처리 
 
-        # sampling history 삭제 
+        ## sampling history 삭제 
         try:
-            conn = sqlite3.connect(sampling_table_path)
-            cur = conn.cursor()
-            cur.execute(DELETE_SAMPLING_HISTORY_QUERY % condition)
-            conn.commit()
+            self.execute_query(sampling_table_path, DELETE_SAMPLING_HISTORY_QUERY % condition, False)
         except Exception, err:
-            __LOG__.Exception()
             return {"code": 1, "message" : "-ERR %s table history status delete fail" % table_id}
-        finally:
-            try: cur.close()
-            except: pass
-            try: conn.close()
-            except: pass
 
         ret_message = "delete %s sampling history success (delete condition : %s)" % \
                 (table_id, condition)
@@ -655,24 +610,18 @@ class MSD(object):
             # DLD value: (ip_address, scope, key, partition, block_num) 
             # sampling_history : (key, partition, block_num, node_id, status) 변환
             ip_address, _, key, partition, block_num = target_record.split(',')
-            node_id = self.get_node_id(ip_address)
+            
+            try: node_id = self.get_node_id(ip_address)
+            except Exception, e: return {"code": 1, "message" : "-ERR get node_id fail "}
 
             # data 변환 후 sampling history db에 insert
             try:
-                conn = sqlite3.connect(sampling_table_path)
-                cur = conn.cursor()
-                cur.execute(INSERT_SAMPLING_HISTORY_QUERY % \
-                (key, partition, int(block_num), int(node_id), 'R'))
-                conn.commit()
+                self.execute_query(sampling_table_path, INSERT_SAMPLING_HISTORY_QUERY % \
+                (key, partition, int(block_num), int(node_id), 'R'), False)
             except Exception, err:
                 __LOG__.Exception()
                 return {"code": 0, "message" : "-ERR Insert %s table sampling history fail" % table_id}
-            finally:
-                try: cur.close()
-                except: pass
-                try: conn.close()
-                except: pass
-           
+          
             # worker에게 전달하기 위해 node_id 별로 record 저장 
             # final_record_dict = {
             #           'ip_address_1' : ['key,partition,block_num', ...],
@@ -693,19 +642,11 @@ class MSD(object):
         node_id를 인자로 받아 node_ip를 반환 
         """
         try:
-            conn = sqlite3.connect(SYS_NODE_INFO)
-            cur = conn.cursor()
-            cur.execute(SELECT_NODE_IP_QUERY % node_id)
-            node_ip = cur.fetchall()[0][0]
+            result = self.execute_query(SYS_NODE_INFO, SELECT_NODE_IP_QUERY % node_id)
+            node_ip = result[0][0]
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message" : "-ERR get node_ip fail "}
-        finally:
-            try: cur.close()
-            except: pass
-            try: conn.close()
-            except: pass
-
+            raise Exception(err)
         return node_ip
 
     def get_node_id(self, node_ip):
@@ -713,19 +654,11 @@ class MSD(object):
         node_ip를 인자로 받아 node_id를 반환 
         """
         try:
-            conn = sqlite3.connect(SYS_NODE_INFO)
-            cur = conn.cursor()
-            cur.execute(SELECT_NODE_ID_QUERY % node_ip)
-            node_id = cur.fetchall()[0][0]
+            result = self.execute_query(SYS_NODE_INFO, SELECT_NODE_ID_QUERY % node_ip)
+            node_id = result[0][0]
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message" : "-ERR get node_id fail "}
-        finally:
-            try: cur.close()
-            except: pass
-            try: conn.close()
-            except: pass
-
+            raise Exception(err)
         return node_id
 
     def change_column_name(self, line, form='worker'):
@@ -782,15 +715,11 @@ class MSD(object):
 
     def get_table_info(self, table_id):
         try:
-            conn = sqlite3.connect(Default.M6_MASTER_DATA_DIR + '/SYS_TABLE_INFO.DAT')
-            c = conn.cursor()
-            c.execute("SELECT DSK_EXP_TIME FROM SYS_TABLE_INFO WHERE TABLE_NAME = '%s'" % table_id)
-            result = c.fetchall()
+            result = self.execute_query(Default.M6_MASTER_DATA_DIR + '/SYS_TABLE_INFO.DAT', \
+                  "SELECT DSK_EXP_TIME FROM SYS_TABLE_INFO WHERE TABLE_NAME = '%s'" % table_id)
         except Exception, err:
-            __LOG__.Exception(str(err))
-        finally:
-            c.close()
-            conn.close()
+            __LOG__.Exception()
+            raise Exception(err)
         return result
 
     def expire_check(self):
@@ -816,9 +745,15 @@ class MSD(object):
 
                 # table의 disk_exp_time 
                 table_id = file_name[:-4]
-                result = self.get_table_info(table_id)
-                if len(result) == 0:
-                    return {'code': 1, 'message': '-ERR %s table is not exists' % table_id}
+
+                # FIXME : systableinfo에 없는 테이블 이름의 파일이 잇는경우 thread 멈춤 현상 해결
+                try: 
+                    result = self.get_table_info(table_id)
+                    if len(result) == 0:
+                        __LOG__.Trace('expire checker thread: %s table is not exists' % table_id)
+                        continue
+                except Exception, e:
+                    return {'code': 1, 'message': '-ERR %s' % str(e)}
                 disk_exp_time = result[0][0]
 
                 # (현재 시간 - disk_exp_time) 계산
