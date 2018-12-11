@@ -264,7 +264,7 @@ class MSD(object):
             table_name = param_dict["table_name"]
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+            return {"code": 1, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
 
         # default sampling_history directory 생성
         try: os.makedirs(Default.M6_MASTER_DATA_DIR + '/sampling_history')
@@ -272,7 +272,7 @@ class MSD(object):
 
         # 테이블 중복 체크
         if os.path.exists(SAMPLING_HISTORY % table_name):
-            return {"code": 0, "message": "-ERR %s sampling history is already exists" % table_name}
+            return {"code": 1, "message": "-ERR %s sampling history is already exists" % table_name}
 
         try:
             sampling_table_path = SAMPLING_HISTORY % table_name
@@ -281,7 +281,7 @@ class MSD(object):
             cur.execute(CREATE_SAMPLING_TABLE_QUERY)
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message" : "-ERR Create %s table's sampling history fail" % table_name}
+            return {"code": 1, "message" : "-ERR Create %s table's sampling history fail" % table_name}
         finally:
             try: cur.close()
             except: pass
@@ -314,18 +314,18 @@ class MSD(object):
             table_name = param_dict["table_name"]
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+            return {"code": 1, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
 
         # 테이블 존재 체크
         if not os.path.exists(SAMPLING_HISTORY % table_name):
-            return {"code": 0, "message": "-ERR %s sampling history is not exists" % table_name}
+            return {"code": 1, "message": "-ERR %s sampling history is not exists" % table_name}
 
         # sampling history table 삭제
         try:
             os.remove(SAMPLING_HISTORY % table_name)
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message" : "-ERR Delete %s table's sampling history fail" % table_name}
+            return {"code": 1, "message" : "-ERR Delete %s table's sampling history fail" % table_name}
 
         __LOG__.Trace("Delete %s sampling history success" % table_name)
         return {"code": 0, "message" : "Delete %s sampling history success" % table_name}
@@ -452,11 +452,11 @@ class MSD(object):
             node_id = param_dict['node_id']
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+            return {"code": 1, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
 
         # 테이블 존재 체크
         if not os.path.exists(SAMPLING_HISTORY % table_id):
-            return {"code": 0, "message": "-ERR %s sampling history is not exists" % table_id}
+            return {"code": 1, "message": "-ERR %s sampling history is not exists" % table_id}
 
         sampling_table_path = SAMPLING_HISTORY % table_id
 
@@ -465,7 +465,7 @@ class MSD(object):
             self.execute_query(sampling_table_path, UPDATE_SAMPLING_HISTORY_STATUS_QUERY %\
                     ('C', partition_key, partition_date, block_num, node_id), False)
         except Exception, err:
-            return {"code": 0, "message" : "-ERR %s table history status update fail" % table_id}
+            return {"code": 1, "message" : "-ERR %s table history status update fail" % table_id}
 
         ret_message = "update %s sampling history success (%d, %s, %s, %d,)" % \
                 (table_id, node_id, partition_key, partition_date, block_num)
@@ -566,11 +566,11 @@ class MSD(object):
             condition = param_dict['condition']
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+            return {"code": 1, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
 
         # 테이블 존재 체크
         if not os.path.exists(SAMPLING_HISTORY % table_id):
-            return {"code": 0, "message": "-ERR %s sampling history is not exists" % table_id}
+            return {"code": 1, "message": "-ERR %s sampling history is not exists" % table_id}
 
         sampling_table_path = SAMPLING_HISTORY % table_id
 
@@ -629,7 +629,7 @@ class MSD(object):
                 (key, partition, int(block_num), int(node_id), 'R'), False)
             except Exception, err:
                 __LOG__.Exception()
-                return {"code": 0, "message" : "-ERR Insert %s table sampling history fail" % table_id}
+                return {"code": 1, "message" : "-ERR Insert %s table sampling history fail" % table_id}
           
             # worker에게 전달하기 위해 node_id 별로 record 저장 
             # final_record_dict = {
