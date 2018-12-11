@@ -186,6 +186,8 @@ class MSD(object):
                         ret_message = self.REMOVE(param_dic)
                     elif cmd == "REBUILD":
                         ret_message = self.REBUILD(param_dic)
+                    elif cmd == "STATUS":
+                        ret_message = self.STATUS(param_dic)
                     else:
                         ret_message = "-ERR Invalid Command\r\n"
 
@@ -632,13 +634,44 @@ class MSD(object):
 
         print final_record_dict
         for keys in final_record_dict:
-            param_dict = self.make_rebuild_protocol(table_id, condition, final_record_dict[keys])
-            print 'param_dict : ', param_dict
+            worker_param_dic = self.make_rebuild_protocol(table_id, condition, final_record_dict[keys])
+            print 'worker_param_dic : ', worker_param_dic
             # FIXME: rebuild 정보를 worker에 전달 , worker return에 따른 처리 추가 
             #port = 9999
             #s = Socket.Socket(keys, port)
             #s.Readline
             #ret_message = s.SendMessage(param_dict)
+
+        ret_message = "%s sampling rebuild success  [%s]" % (table_id, param_dict)
+        __LOG__.Trace(ret_message)
+        return {"code" : 0, "message" : ret_message}
+
+    def STATUS(self, param_dic):
+        """
+        - sampling history에서 샘플링 정보 삭제 (Master의 REMOVE 이용)
+        - woker에게 remove 정보 전달 (Master의 REMOVE 이용)
+        - DLD정보를 이용하여 sampling history에 status(R)인 정보 넣음 
+        - worker에게 rebuild 정보 전달 
+
+        @ request
+        {
+            "protocol": "remove",
+             "table_id": "T123"
+             "condition": "(PARTITION_DATE >= '20180101000000')"
+        }
+
+        @ response
+        {"code": 0, "message": ""}
+        """
+        
+        # get parameter
+        try:
+            table_id = param_dict['table_id']
+            condition = param_dict['condition']
+        except Exception, err:
+            __LOG__.Exception()
+            return {"code": 0, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+        return
 
 
     def make_rebuild_protocol(self, table_id, condition, record_list):
