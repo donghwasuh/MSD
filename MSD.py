@@ -119,13 +119,23 @@ GET_SAMPLING_HISTORY_NODE_ID_QUERY = """
         %s
 """
 
-SELECT_NODE_ID_QUERY = """
+SELECT_NODE_IP_QUERY = """
     SELECT
         IP_ADDRESS_1
     FROM
         SYS_NODE_INFO
     WHERE
         NODE_ID = %d
+
+"""
+
+SELECT_NODE_ID_QUERY = """
+    SELECT
+        NODE_ID
+    FROM
+        SYS_NODE_INFO
+    WHERE
+        IP_ADDRESS_1 = '%s'
 
 """
 
@@ -198,7 +208,27 @@ class MSD(object):
         except :
             __LOG__.Exception()
 
-   
+  
+    def execute_query(self, path, query, is_select=True):
+        data = []
+        try:
+            backend = Backend([path])
+            conn = backend.GetConnection()
+            cursor = conn.cursor()
+            cursor.execute(query)
+            if is_select:
+                data = cursor.fetchall()
+            else:
+                conn.commit()
+        except Exception, e:
+            __LOG__.Exception()
+        finally:
+            try: cursor.close()
+            except: pass
+            try: conn.close()
+            except: pass
+        return data
+
     def INIT(self, param_dict):
         """
         샘플링 테이블 생성 
@@ -581,10 +611,10 @@ class MSD(object):
 
 
         # sampling history 정보 삭제 
-        #ret_message = self.REMOVE(param_dict)
-        #if ret_message['code'] != 0:
-        #    return ret_message
-        #
+        ret_message = self.REMOVE(param_dict)
+        if ret_message['code'] != 0:
+            return ret_message
+        
 
         # dld에서 condtion에 맞는 위치정보 select 
         l_query = self.change_column_name(condition, 'dld')
@@ -613,16 +643,47 @@ class MSD(object):
             else:
                 total_dict[cur_key].append(record.strip())
 
-        #  다중화된 위치정보 중 1개의 record를 random으로 고르는 작업 
+        final_record_dict = {}
+        target_record = ''
         for key in total_dict.keys():
+            #  다중화된 DLD 위치정보 중 1개의 record를 random으로 고르는 작업 
             value_list = total_dict[key]
-            print 'last one : ', lst[random.randrange(0,len(value_list))]
+            target_record = value_list[random.randrange(0,len(value_list))]
 
-        # FIXME: sampling history db에 insert 될 수있는 형태로 데이터 가공
+            print target_record
+           
+            # DLD value: (ip_address, scope, key, partition, block_num) 
+            # sampling_history : (key, partition, block_num, node_id, status) 변환
+            ip_address, _, key, partition, block_num = target_record.split(',')
+            node_id = self.get_node_id(ip_address)
 
+            # data 변환 후 sampling history db에 insert
+            try:
+                conn = sqlite3.connect(sampling_table_path)
+                cur = conn.cursor()
+                cur.execute(INSERT_SAMPLING_HISTORY_QUERY % \
+                (key, partition, int(block_num), int(node_id), 'R'))
+                conn.commit()
+            except Exception, err:
+                __LOG__.Exception()
+                return {"code": 0, "message" : "-ERR Insert %s table sampling history fail" % table_id}
+            finally:
+                try: cur.close()
+                except: pass
+                try: conn.close()
+                except: pass
+           
+            # worker에게 전달하기 위해 node_id 별로 record 저장 
+            # final_record_dict = {
+            #           'ip_address_1' : ['key,partition,block_num', ...],
+            #           'ip_address_2' : ['key,partition,block_num', ...],
+            # }
+            if not final_record_dict.has_key(ip_address):
+                final_record_dict[ip_address] = []
+            final_record_dict[ip_address].append(key + ',' + partition + ',' + block_num)
+            print final_record_dict
+            print
 
-        # FIXME: dld 정보에 status를 'R'로 변경해서 sampling history db에 insert
-        
 
         # FIXME: rebuild 정보를 worker에 전달 
 
@@ -634,11 +695,31 @@ class MSD(object):
         try:
             conn = sqlite3.connect(SYS_NODE_INFO)
             cur = conn.cursor()
-            cur.execute(SELECT_NODE_ID_QUERY % node_id)
-            node_id = cur.fetchall()[0][0]
+            cur.execute(SELECT_NODE_IP_QUERY % node_id)
+            node_ip = cur.fetchall()[0][0]
         except Exception, err:
             __LOG__.Exception()
             return {"code": 0, "message" : "-ERR get node_ip fail "}
+        finally:
+            try: cur.close()
+            except: pass
+            try: conn.close()
+            except: pass
+
+        return node_ip
+
+    def get_node_id(self, node_ip):
+        """
+        node_ip를 인자로 받아 node_id를 반환 
+        """
+        try:
+            conn = sqlite3.connect(SYS_NODE_INFO)
+            cur = conn.cursor()
+            cur.execute(SELECT_NODE_ID_QUERY % node_ip)
+            node_id = cur.fetchall()[0][0]
+        except Exception, err:
+            __LOG__.Exception()
+            return {"code": 0, "message" : "-ERR get node_id fail "}
         finally:
             try: cur.close()
             except: pass
@@ -710,7 +791,7 @@ class MSD(object):
         finally:
             c.close()
             conn.close()
-        return result[0][0]
+        return result
 
     def expire_check(self):
         """
@@ -735,7 +816,10 @@ class MSD(object):
 
                 # table의 disk_exp_time 
                 table_id = file_name[:-4]
-                disk_exp_time = self.get_table_info(table_id)
+                result = self.get_table_info(table_id)
+                if len(result) == 0:
+                    return {'code': 1, 'message': '-ERR %s table is not exists' % table_id}
+                disk_exp_time = result[0][0]
 
                 # (현재 시간 - disk_exp_time) 계산
                 limit_date = now_date_min - datetime.timedelta(minutes=disk_exp_time)
