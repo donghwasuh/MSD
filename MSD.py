@@ -129,6 +129,16 @@ SELECT_NODE_IP_QUERY = """
 
 """
 
+SELECT_ALL_NODE_ID_QUERY = """
+    SELECT
+        NODE_ID 
+    FROM
+        SYS_NODE_INFO
+    WHERE
+        NODE_ID != 0
+
+"""
+
 SELECT_NODE_ID_QUERY = """
     SELECT
         NODE_ID
@@ -161,7 +171,6 @@ class MSD(object):
             if Default.DEBUG:
                 __LOG__.Trace("Start %s" % str(self.sock.addr))
 
-            #FIXME 시작하자마자 thread start되는 위치로 변경
             self.exp_check_thread.start()
             while True:
                 try :
@@ -521,7 +530,6 @@ class MSD(object):
             param = json.dumps(param_dict) + '\r\n'
 
             #ret_message = s.SendMessage(param)
-            # FIXME :return 처리 
 
         ## sampling history 삭제 
         try:
@@ -543,7 +551,7 @@ class MSD(object):
 
         @ request
         {
-            "protocol": "remove",
+            "protocol": "rebuild",
              "table_id": "T123"
              "condition": "(PARTITION_DATE >= '20180101000000')"
         }
@@ -646,18 +654,16 @@ class MSD(object):
         __LOG__.Trace(ret_message)
         return {"code" : 0, "message" : ret_message}
 
-    def STATUS(self, param_dic):
+    def STATUS(self, param_dict):
         """
-        - sampling history에서 샘플링 정보 삭제 (Master의 REMOVE 이용)
-        - woker에게 remove 정보 전달 (Master의 REMOVE 이용)
-        - DLD정보를 이용하여 sampling history에 status(R)인 정보 넣음 
-        - worker에게 rebuild 정보 전달 
+        - rebuild 상태 정보 전달
+        - 각 노드의 블럭 크기 전달
+        - 각 노드의 큐 정보 전달
 
         @ request
         {
-            "protocol": "remove",
-             "table_id": "T123"
-             "condition": "(PARTITION_DATE >= '20180101000000')"
+            "protocol": "status",
+             "table_id_list": "["T123"]"
         }
 
         @ response
@@ -666,11 +672,27 @@ class MSD(object):
         
         # get parameter
         try:
-            table_id = param_dict['table_id']
-            condition = param_dict['condition']
+            table_id_list = eval(param_dict['table_id_list'])
         except Exception, err:
             __LOG__.Exception()
-            return {"code": 0, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+            return {"code": 1, "message": '-ERR Param error %s [%s]' % (str(err), param_dict)}
+
+        try: node_id_list = self.get_all_node_id()
+        except Exception, err: return {"code": 1, "message": '-ERR get node_ip fail'}
+
+        print node_id_list
+
+        #FIXME : worker로 status 프로토콜 전달 및 처리 
+
+        for table_id in table_id_list:
+            # 테이블 존재 체크
+            sampling_table_path = SAMPLING_HISTORY % table_id
+            if not os.path.exists(sampling_table_path):
+                return {"code": 0, "message": "-ERR %s sampling history is not exists" % table_id}
+
+            for node_id in node_id_list:
+                remain_build_target = self.get_remain_rebuild_target(table_id, node_id)
+                print 'rbt : ', remain_build_target
         return
 
 
@@ -684,6 +706,23 @@ class MSD(object):
         param_dict['target_block']['fields'] = ["partition_date", "partition_key", "block_num"]
         param_dict['target_block']['records'] = record_list
         return param_dict
+
+    def get_remain_rebuild_target(self, table_id, node_id):
+        query = """
+            SELECT
+                COUNT(*)
+            FROM 
+                SAMPLING_HISTORY
+            WHERE
+                NODE_ID = %d AND
+                STATUS = 'R'
+        """
+        try:
+            result = self.execute_query((SAMPLING_HISTORY % table_id), (query % node_id))
+        except Exception, err:
+            __LOG__.Exception()
+            return {"code": 0, "message" : "-ERR Insert %s table sampling history fail" % table_id}
+        return result[0][0]
 
         
     def get_node_ip(self, node_id):
@@ -709,6 +748,20 @@ class MSD(object):
             __LOG__.Exception()
             raise Exception(err)
         return node_id
+
+    def get_all_node_id(self):
+        """
+        현재 cluster의 모든 worker의 node_id를 list로 반환 
+        """
+        try:
+            result = self.execute_query(SYS_NODE_INFO, SELECT_ALL_NODE_ID_QUERY)
+            node_id_list = []
+            for row in result:
+                node_id_list.append(row[0])
+        except Exception, err:
+            __LOG__.Exception()
+            raise Exception(err)
+        return node_id_list
 
     def change_column_name(self, line, form='worker'):
         """
