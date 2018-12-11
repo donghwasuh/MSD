@@ -606,7 +606,7 @@ class MSD(object):
             target_record = value_list[random.randrange(0,len(value_list))]
 
            
-            # DLD value: (ip_address, scope, key, partition, block_num) 
+            # DLD return value: (ip_address, scope, key, partition, block_num)를 
             # sampling_history : (key, partition, block_num, node_id, status) 변환
             ip_address, _, key, partition, block_num = target_record.split(',')
             
